@@ -2,17 +2,16 @@ import sdk from "./1-initialize-sdk.js";
 import { readFileSync } from "fs";
 
 const bundleDrop = sdk.getBundleDropModule(
-  "0xEa73B3a96544A04d4e01B37b963B1fa149b86527",
+  "0x79527669D0d4f97470A48B82E03c672c6ae3194d",
 );
 
 (async () => {
   try {
     await bundleDrop.createBatch([
       {
-        // TODO: add nft name for WidDAO and upload a picture to ipfs
-        name: "Leaf Village Headband",
-        description: "This NFT will give you access to NarutoDAO!",
-        image: readFileSync("scripts/assets/headband.png"),
+        name: "Lon Capa Login",
+        description: "This NFT will give you access to WidDAO!",
+        image: "https://ipfs.io/ipfs/QmYpSC2xcvA7KePahbp248dmkE1ingTZi5wmzMpqoV4sqi",
       },
     ]);
     console.log("✅ Successfully created a new NFT in the drop!");
