@@ -1,3 +1,5 @@
+import { UnsupportedChainIdError } from "@web3-react/core";
+
 import { useEffect, useMemo, useState } from "react";
 
 import { useWeb3 } from "@3rdweb/hooks";
@@ -12,6 +14,10 @@ const bundleDropModule = sdk.getBundleDropModule(
 
 const tokenModule = sdk.getTokenModule(
   "0x0045cC49bd42A9f744DC5cac7db6cb9233b30FD0"
+);
+
+const voteModule = sdk.getVoteModule(
+  "0xC1cBd913d770f5cB3F904E0ff8cacFaC877d8A9e",
 );
 
 const App = () => {
@@ -32,10 +38,54 @@ const App = () => {
   // holds all of our members addresses
   const [memberAddresses, setMemberAddresses] = useState([]);
 
+  // voting states
+  const [proposals, setProposals] = useState([]);
+  const [isVoting, setIsVoting] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
+
   // for shortening wallet addresses
   const shortenAddress = (str) => {
     return str.substring(0, 6) + "..." + str.substring(str.length - 4);
   };
+
+  // get all existing proposals from the contract
+  useEffect(async () => {
+    if (!hasClaimedNFT) {
+      return;
+    }
+    // grab all proposals 
+    try {
+      const proposals = await voteModule.getAll();
+      setProposals(proposals);
+      console.log("🌈 Proposals:", proposals);
+    } catch (error) {
+      console.log("failed to get proposals", error);
+    }
+  }, [hasClaimedNFT]);
+
+  // checks if user has voted
+useEffect(async () => {
+  if (!hasClaimedNFT) {
+    return;
+  }
+  // check if proposals have been retrieved 
+  if (!proposals.length) {
+    return;
+  }
+
+  // check if the user has already voted on the first proposal
+  try {
+    const hasVoted = await voteModule.hasVoted(proposals[0].proposalId, address);
+    setHasVoted(hasVoted);
+    if(hasVoted) {
+      console.log("🥵 User has already voted");
+    } else {
+      console.log("🙂 User has not voted yet");
+    }
+    } catch (error) {
+      console.error("Failed to check if wallet has voted", error);
+    }
+  }, [hasClaimedNFT, proposals, address]);
 
   // get address of everyone who holds membership nft
   useEffect(async () => {
@@ -110,6 +160,19 @@ const App = () => {
     }
   }, [address]);
 
+  // unsupported network error 
+  if (error instanceof UnsupportedChainIdError ) {
+    return (
+      <div className="unsupported-network">
+        <h2>Please connect to Rinkeby</h2>
+        <p>
+          This dapp only works on the Rinkeby network, please switch networks
+          in your connected wallet.
+        </p>
+      </div>
+    );
+  }
+
   // user hasn't connected wallet
   if (!address) {
     return (
@@ -149,10 +212,124 @@ const App = () => {
               </tbody>
             </table>
           </div>
-        </div>
+          <div>
+            <h2>Active Proposals</h2>
+            <form
+              onSubmit={async(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // disable button to prevent double clicks 
+                setIsVoting(true);
+
+                // get votes from the form
+                const votes = proposals.map((proposal) => {
+                  let voteResult = {
+                    proposalId: proposal.proposalId,
+                    // abstain by default
+                    vote: 2,
+                  };
+                  proposal.votes.forEach((vote) => {
+                    const elem = document.getElementById(
+                      proposal.proposalId + "-" + vote.type
+                    );
+
+                    if (elem.checked) {
+                      voteResult.vote = vote.type; 
+                      return;
+                    }
+                  });
+                  return voteResult;
+                });
+
+              // make sure user delegates token to vote
+              try {
+                // check if wallet still needs to delegate tokens 
+                const delegation = await tokenModule.getDelegationOf(address);
+
+                if (delegation === ethers.constants.AddressZero) {
+                  // delegate tokens if haven't already
+                  await tokenModule.delegateTo(address);
+                }
+                // vote on the proposals 
+                try {
+                  await Promise.all(
+                    votes.map(async (vote) => {
+                      // get latest state of proposal
+                      const proposal = await voteModule.get(vote.proposalId);
+                      // check if proposal is open for voting (state === 1)
+                      if (proposal.state === 1) {
+                        return voteModule.vote(vote.proposalId, vote.vote);
+                      }
+                      return;
+                    })
+                  );
+                  try {
+                    // execute proposals 
+                    await Promise.all(
+                      votes.map(async (vote) => {
+                        // get latest state of proposal
+                        const proposal = await voteModule.get(vote.proposalId);
+                        // check if proposal is ready to be executed (state === 4)
+                        if (proposal.state === 4) {
+                          return voteModule.execute(vote.proposalId);
+                        }
+                      })
+                  );
+                  setHasVoted(true);
+                  console.log("successfully voted");
+                } catch (err) {
+                  console.error("failed to execute votes", err);
+                }
+              } catch (err) {
+                console.error("failed to vote", err);
+              }
+            } catch (err) {
+              console.error("failed to delegate tokens", err);
+            } finally {
+              setIsVoting(false);
+            }
+          }}
+          >
+          {proposals.map((proposal, index) => (
+            <div key={proposal.proposalId} className="card">
+              <h5>{proposal.description}</h5>
+              <div>
+                {proposal.votes.map((vote) => (
+                  <div key={vote.type}>
+                    <input
+                      type="radio"
+                      id={proposal.proposalId + "-" + vote.type}
+                      name={proposal.proposalId}
+                      value={vote.type}
+                      // default the "abstain" vote to chedked
+                      defaultChecked={vote.type === 2}
+                    />
+                    <label htmlFor={proposal.proposalId + "-" + vote.type}>
+                      {vote.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <button disabled={isVoting || hasVoted} type="submit">
+            {isVoting
+              ? "Voting..."
+              : hasVoted
+                ? "You Already Voted"
+                : "Submit Votes"}
+          </button>
+          <small>
+            This will trigger multiple transactions that you will need to
+            confirm.
+          </small>
+        </form>
       </div>
-    );
-  };
+    </div>
+  </div>
+);
+};
 
   const mintNft = async () => {
     setIsClaiming(true);
